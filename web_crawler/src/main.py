@@ -26,8 +26,8 @@ from web_crawler.src.search import SearchEngine
 
 
 # Configuration
-INDEX_FILE: str = 'data/index.json'
-DATA_DIR: str = 'data'
+INDEX_FILE: str = 'web_crawler/data/index.json'
+DATA_DIR: str = 'web_crawler/data'
 
 
 class SearchTool:
