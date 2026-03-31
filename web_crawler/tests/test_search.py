@@ -1,5 +1,11 @@
 """
 Tests for the search module.
+
+Comprehensive test suite for search functionality including:
+- Basic single and multi-word queries
+- TF-IDF ranking and relevance scoring
+- Query suggestions with fuzzy matching
+- Edge cases and error handling
 """
 import pytest
 from web_crawler.src.indexer import InvertedIndex

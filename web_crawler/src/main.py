@@ -1,27 +1,42 @@
 """
 Main command-line interface for the search tool.
+
+This module provides an interactive shell for building, loading, and searching
+an inverted index. It supports basic frequency-based search and advanced
+TF-IDF ranked search with query suggestions.
+
+Supported Commands:
+    - build: Crawl website and create inverted index
+    - load: Load index from disk
+    - find: Search for pages (frequency ranking)
+    - rank: Search for pages (TF-IDF ranking)
+    - suggest: Get query suggestions
+    - print: Display index for a word
+    - help: Show available commands
+    - exit: Exit the program
 """
 import os
 import sys
 import json
 from pathlib import Path
+from typing import Optional, List
 from web_crawler.src.crawler import WebCrawler
 from web_crawler.src.indexer import InvertedIndex
 from web_crawler.src.search import SearchEngine
 
 
 # Configuration
-INDEX_FILE = 'data/index.json'
-DATA_DIR = 'data'
+INDEX_FILE: str = 'data/index.json'
+DATA_DIR: str = 'data'
 
 
 class SearchTool:
     """Command-line interface for the search tool."""
     
-    def __init__(self):
-        """Initialize the search tool."""
-        self.index = InvertedIndex()
-        self.search_engine = None
+    def __init__(self) -> None:
+        """Initialize the search tool with empty index."""
+        self.index: InvertedIndex = InvertedIndex()
+        self.search_engine: Optional[SearchEngine] = None
         self.ensure_data_directory()
     
     def ensure_data_directory(self) -> None:
@@ -29,7 +44,12 @@ class SearchTool:
         os.makedirs(DATA_DIR, exist_ok=True)
     
     def build(self) -> None:
-        """Build the index by crawling the website."""
+        """
+        Build the index by crawling the website.
+        
+        Time Complexity: O(p*n) where p = pages, n = average words per page
+        Network time dominates: O(p*6 seconds) due to politeness window
+        """
         print("Building index...")
         print("This may take several minutes due to the politeness window.")
         
@@ -75,6 +95,8 @@ class SearchTool:
         """
         Print the inverted index for a particular word.
         
+        Time Complexity: O(d) where d = documents containing word
+        
         Args:
             word: The word to print
         """
@@ -97,9 +119,11 @@ class SearchTool:
             print(f"    Frequency: {stats['frequency']}")
             print(f"    Positions: {stats['positions']}")
     
-    def find(self, *words) -> None:
+    def find(self, *words: str) -> None:
         """
-        Find pages containing the given search terms.
+        Find pages containing the given search terms (frequency ranking).
+        
+        Time Complexity: O(w*d) where w = words, d = avg matching documents
         
         Args:
             words: Variable number of words to search for
@@ -113,7 +137,7 @@ class SearchTool:
             return
         
         query = ' '.join(words)
-        print(f"\nSearching for: '{query}'")
+        print(f"\nSearching for: '{query}' (frequency ranking)")
         
         # Get results with frequency information
         results = self.search_engine.get_results_with_frequency(query)
@@ -129,6 +153,67 @@ class SearchTool:
                 for word, freq in result['frequencies'].items():
                     print(f"   - '{word}': {freq} occurrences")
     
+    def rank(self, *words: str) -> None:
+        """
+        Find pages using TF-IDF ranking (more advanced).
+        
+        Time Complexity: O(w*d*log(d)) where w = words, d = avg docs
+        
+        Args:
+            words: Variable number of words to search for
+        """
+        if self.search_engine is None:
+            print("Error: Index not loaded. Please run 'load' command first.")
+            return
+        
+        if not words:
+            print("Error: Please provide at least one word to search for.")
+            return
+        
+        query = ' '.join(words)
+        print(f"\nSearching for: '{query}' (TF-IDF ranking)")
+        
+        # Get results with TF-IDF scoring
+        results = self.search_engine.get_results_with_tf_idf(query)
+        
+        if not results:
+            print("No pages found containing all search terms.")
+            return
+        
+        print(f"Found in {len(results)} page(s):\n")
+        for i, result in enumerate(results, 1):
+            print(f"{i}. {result['url']}")
+            print(f"   TF-IDF Score: {result['tf_idf_score']:.4f}")
+            for word, freq in result['frequencies'].items():
+                print(f"   - '{word}': {freq} occurrences")
+    
+    def suggest(self, word: str) -> None:
+        """
+        Get query suggestions for a word.
+        
+        Time Complexity: O(n*m) where n = indexed words, m = word length
+        
+        Args:
+            word: The word to get suggestions for
+        """
+        if self.search_engine is None:
+            print("Error: Index not loaded. Please run 'load' command first.")
+            return
+        
+        if not word:
+            print("Error: Please provide a word.")
+            return
+        
+        suggestions = self.search_engine.get_query_suggestions(word, max_suggestions=5)
+        
+        if not suggestions:
+            print(f"No suggestions found for '{word}'.")
+            return
+        
+        print(f"\nSuggestions for '{word}':")
+        for i, (suggested_word, similarity) in enumerate(suggestions, 1):
+            print(f"  {i}. {suggested_word} (similarity: {similarity:.2%})")
+    
     def print_help(self) -> None:
         """Print help information."""
         help_text = """
@@ -136,24 +221,32 @@ Search Tool Commands:
 
   build                 - Crawl the website and build the index
   load                  - Load the previously built index from disk
+  
+  find <words...>       - Search with basic frequency ranking
+  rank <words...>       - Search with advanced TF-IDF ranking
+  suggest <word>        - Get suggestions for a word
   print <word>          - Print the inverted index for a word
-  find <words...>       - Find pages containing the search terms
+  
   help                  - Show this help message
   exit                  - Exit the program
 
 Examples:
   > build
   > load
-  > print nonsense
   > find good friends
-  > find indifference
+  > rank good friends
+  > suggest goodness
+  > print nonsense
+  > exit
 """
         print(help_text)
+        print("=" * 60)
+        print("Type 'help' for available commands.\n")
     
     def run(self) -> None:
-        """Run the interactive command-line interface."""
+        """Run the interactive search tool."""
         print("=" * 60)
-        print("             Search Engine Tool")
+        print("Search Tool - Inverted Index Search with TF-IDF Ranking")
         print("=" * 60)
         print("Type 'help' for available commands.\n")
         
@@ -182,6 +275,16 @@ Examples:
                         self.find(*args)
                     else:
                         print("Error: Please provide search terms.")
+                elif command == 'rank':
+                    if args:
+                        self.rank(*args)
+                    else:
+                        print("Error: Please provide search terms.")
+                elif command == 'suggest':
+                    if args:
+                        self.suggest(args[0])
+                    else:
+                        print("Error: Please provide a word.")
                 elif command == 'help':
                     self.print_help()
                 elif command == 'exit':
