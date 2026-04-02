@@ -25,9 +25,16 @@ from web_crawler.src.indexer import InvertedIndex
 from web_crawler.src.search import SearchEngine
 
 
+<<<<<<< HEAD
 # Configuration
 INDEX_FILE: str = 'web_crawler/data/index.json'
 DATA_DIR: str = 'web_crawler/data'
+=======
+# Configuration - resolve paths relative to project root
+PROJECT_ROOT = Path(__file__).parent.parent.parent  # web_crawler/ directory
+DATA_DIR: str = str(PROJECT_ROOT / 'data')
+INDEX_FILE: str = str(PROJECT_ROOT / 'data' / 'index.json')
+>>>>>>> 21ad3a1 (fix: data directory issue)
 
 
 class SearchTool:
