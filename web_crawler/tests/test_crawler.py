@@ -106,6 +106,31 @@ class TestWebCrawler:
         
         assert html == "<html>Test</html>"
         assert self.crawler.last_request_time > 0
+
+    @patch('web_crawler.src.crawler.requests.get')
+    def test_load_robots_txt_success(self, mock_get):
+        """Test successful robots.txt loading."""
+        mock_response = Mock()
+        mock_response.text = "User-agent: *\nDisallow: /private"
+        mock_response.raise_for_status = Mock()
+        mock_get.return_value = mock_response
+
+        self.crawler._load_robots_txt()
+
+        assert self.crawler.robots_checked is True
+        assert self.crawler._is_allowed_by_robots("https://example.com/")
+        assert not self.crawler._is_allowed_by_robots("https://example.com/private")
+
+    @patch('web_crawler.src.crawler.requests.get')
+    def test_load_robots_txt_failure_defaults_allow(self, mock_get):
+        """If robots.txt cannot be loaded, crawler should continue by default."""
+        import requests
+        mock_get.side_effect = requests.RequestException("robots unavailable")
+
+        self.crawler._load_robots_txt()
+
+        assert self.crawler.robots_checked is True
+        assert self.crawler._is_allowed_by_robots("https://example.com/anything")
     
     @patch('web_crawler.src.crawler.requests.get')
     def test_fetch_page_error(self, mock_get):
@@ -132,6 +157,11 @@ class TestCrawlerIntegration:
     @patch('web_crawler.src.crawler.requests.get')
     def test_crawl_integration(self, mock_get):
         """Test basic crawling flow."""
+        robots_txt = """
+        User-agent: *
+        Disallow:
+        """
+
         # Mock the HTTP responses
         main_html = """
         <html>
@@ -148,6 +178,7 @@ class TestCrawlerIntegration:
         """
         
         responses = [
+            {"text": robots_txt},
             {"text": main_html},
             {"text": page1_html},
             {"text": main_html},  # Extra response in case of revisit
@@ -168,3 +199,45 @@ class TestCrawlerIntegration:
         
         # Should have visited main page and page1
         assert len(crawler.visited_urls) >= 1
+
+    @patch('web_crawler.src.crawler.requests.get')
+    def test_crawl_respects_robots_txt(self, mock_get):
+        """Crawler should skip URLs blocked by robots.txt."""
+        robots_txt = """
+        User-agent: *
+        Disallow: /private
+        """
+        main_html = """
+        <html>
+            <a href="/private">Private</a>
+            <a href="/public">Public</a>
+            <p>Welcome to the site</p>
+        </html>
+        """
+        public_html = """
+        <html>
+            <p>Public content</p>
+        </html>
+        """
+
+        responses = [
+            {"text": robots_txt},
+            {"text": main_html},
+            {"text": public_html},
+        ]
+
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+
+        def side_effect(*args, **kwargs):
+            if responses:
+                mock_response.text = responses.pop(0)["text"]
+            return mock_response
+
+        mock_get.side_effect = side_effect
+
+        crawler = WebCrawler(base_url="https://example.com", politeness_delay=0)
+        pages = crawler.crawl()
+
+        assert "https://example.com/private" not in pages
+        assert "https://example.com/public" in pages
