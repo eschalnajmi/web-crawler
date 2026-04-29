@@ -12,12 +12,12 @@ class TestWebCrawler:
     
     def setup_method(self):
         """Set up test fixtures."""
-        self.crawler = WebCrawler(base_url="https://example.com", politeness_delay=1)
+        self.crawler = WebCrawler(base_url="https://example.com", politeness_delay_range=(6, 20))
     
     def test_crawler_initialization(self):
         """Test crawler initialization."""
         assert self.crawler.base_url == "https://example.com"
-        assert self.crawler.politeness_delay == 1
+        assert self.crawler.politeness_delay_range == (6, 20)
         assert len(self.crawler.visited_urls) == 0
         assert self.crawler.last_request_time == 0
     
@@ -38,16 +38,17 @@ class TestWebCrawler:
         assert self.crawler._normalize_url("https://example.com/page") == "https://example.com/page"
         assert self.crawler._normalize_url("http://example.com/page") == "http://example.com/page"
     
-    def test_politeness_window(self):
-        """Test that politeness window is enforced."""
+    @patch('web_crawler.src.crawler.random.uniform', return_value=10)
+    @patch('web_crawler.src.crawler.time.sleep')
+    def test_politeness_window(self, mock_sleep, mock_uniform):
+        """Test that politeness window is randomized and enforced."""
         self.crawler.last_request_time = time.time()
         
-        start = time.time()
         self.crawler._wait_for_politeness_window()
-        elapsed = time.time() - start
-        
-        # Should wait at least the politeness delay minus some tolerance
-        assert elapsed >= 0.9  # Allow for timing variations
+
+        mock_uniform.assert_called_once_with(6, 20)
+        mock_sleep.assert_called_once()
+        assert 0 < mock_sleep.call_args.args[0] <= 10
     
     def test_extract_links(self):
         """Test link extraction from HTML."""
@@ -194,7 +195,7 @@ class TestCrawlerIntegration:
         
         mock_get.side_effect = side_effect
         
-        crawler = WebCrawler(base_url="https://example.com", politeness_delay=0)
+        crawler = WebCrawler(base_url="https://example.com", politeness_delay_range=(0, 0))
         crawler.crawl()
         
         # Should have visited main page and page1
@@ -236,7 +237,7 @@ class TestCrawlerIntegration:
 
         mock_get.side_effect = side_effect
 
-        crawler = WebCrawler(base_url="https://example.com", politeness_delay=0)
+        crawler = WebCrawler(base_url="https://example.com", politeness_delay_range=(0, 0))
         pages = crawler.crawl()
 
         assert "https://example.com/private" not in pages

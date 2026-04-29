@@ -5,7 +5,7 @@ A complete web search engine implementation that crawls websites, builds an inve
 ## Project Overview
 
 This project implements a professional-grade search engine that:
-- **Crawls** the website `https://quotes.toscrape.com/` while respecting a 6-second politeness window
+- **Crawls** the website `https://quotes.toscrape.com/` while respecting a randomized 6 to 20 second politeness window
 - **Builds** an inverted index with advanced TF-IDF (Term Frequency-Inverse Document Frequency) ranking
 - **Provides** multiple search modes: frequency-based and TF-IDF-ranked search
 - **Supports** query suggestions using fuzzy string matching
@@ -26,7 +26,7 @@ This project implements a professional-grade search engine that:
 #### 1. **Crawler** (`src/crawler.py`)
 - **Purpose**: Fetch and extract content from websites
 - **Features**:
-  - Respects 6-second politeness window between requests
+  - Respects a randomized 6 to 20 second politeness window between requests
   - Handles relative and absolute URLs correctly
   - Extracts text content while removing scripts and styles
   - Implements error handling for network failures
@@ -131,7 +131,7 @@ This will:
 **Expected Output**:
 ```
 Building index...
-This may take several minutes due to the politeness window.
+This may take several minutes due to the randomized politeness window.
 Crawled 109 pages
 Indexing: https://quotes.toscrape.com/
 ...

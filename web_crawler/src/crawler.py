@@ -1,8 +1,9 @@
 """
-Web crawler module for scraping quotes.toscrape.com while respecting politeness window.
+Web crawler module for scraping quotes.toscrape.com while respecting a randomized politeness window.
 """
 import requests
 from bs4 import BeautifulSoup
+import random
 import time
 from typing import List, Dict, Set, Tuple
 import logging
@@ -12,27 +13,29 @@ from urllib.parse import urlparse, parse_qs
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-POLITENESS_DELAY = 6  # seconds between requests
+POLITENESS_DELAY_MIN = 6
+POLITENESS_DELAY_MAX = 20
 BASE_URL = "https://quotes.toscrape.com"
 
 
 class WebCrawler:
     """Crawls websites while respecting politeness constraints."""
     
-    def __init__(self, base_url: str = BASE_URL, politeness_delay: int = POLITENESS_DELAY,
+    def __init__(self, base_url: str = BASE_URL,
+                 politeness_delay_range: Tuple[int, int] = (POLITENESS_DELAY_MIN, POLITENESS_DELAY_MAX),
                  max_pages: int = 100, max_depth: int = 5, max_crawl_time: int = 600):
         """
         Initialize the web crawler.
         
         Args:
             base_url: The base URL to start crawling from
-            politeness_delay: Minimum seconds between successive requests
+            politeness_delay_range: Inclusive min/max seconds between successive requests
             max_pages: Maximum number of pages to crawl (default: 100)
             max_depth: Maximum depth to crawl from start URL (default: 5)
             max_crawl_time: Maximum crawl time in seconds (default: 600)
         """
         self.base_url = base_url
-        self.politeness_delay = politeness_delay
+        self.politeness_delay_range = politeness_delay_range
         self.max_pages = max_pages
         self.max_depth = max_depth
         self.max_crawl_time = max_crawl_time
@@ -77,8 +80,11 @@ class WebCrawler:
     def _wait_for_politeness_window(self) -> None:
         """Enforce the politeness window before making a request."""
         elapsed = time.time() - self.last_request_time
-        if elapsed < self.politeness_delay:
-            wait_time = self.politeness_delay - elapsed
+        min_delay, max_delay = self.politeness_delay_range
+        wait_time = random.uniform(min_delay, max_delay)
+
+        if elapsed < wait_time:
+            wait_time -= elapsed
             logger.info(f"Waiting {wait_time:.1f}s to respect politeness window...")
             time.sleep(wait_time)
     
