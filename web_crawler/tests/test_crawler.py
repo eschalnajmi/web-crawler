@@ -245,7 +245,7 @@ class TestCrawlerIntegration:
         mock_get.side_effect = side_effect
 
         crawler = WebCrawler(base_url="https://example.com", politeness_delay_range=(0, 0))
-        pages = crawler.crawl()
+        pages, hashes = crawler.crawl()
 
         assert "https://example.com/private" not in pages
         assert "https://example.com/public" in pages

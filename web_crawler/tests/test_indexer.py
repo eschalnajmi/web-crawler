@@ -151,12 +151,15 @@ class TestInvertedIndex:
             self.index.save_to_file(temp_file)
             assert os.path.exists(temp_file)
             
-            # Verify file content
+            # Verify file content - should have metadata structure
             with open(temp_file, 'r') as f:
                 data = json.load(f)
             
-            assert "hello" in data
-            assert "world" in data
+            # Check for new metadata structure
+            assert "index" in data
+            assert "metadata" in data
+            assert "hello" in data["index"]
+            assert "world" in data["index"]
         finally:
             if os.path.exists(temp_file):
                 os.unlink(temp_file)

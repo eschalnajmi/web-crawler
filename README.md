@@ -27,7 +27,8 @@ This project implements a professional-grade search engine that:
 - **Purpose**: Fetch and extract content from websites
 - **Features**:
   - Respects `robots.txt` (including `Crawl-delay` when present), uses a descriptive `User-Agent`, and enforces a randomized 6 to 20 second politeness window between requests to the same host
-  - Limits traversal depth (default: 5 levels) to prevent infinite exploration of fictitious resources
+  - **Incremental crawling**: SHA256 content hashing enables skip of unchanged pages on rebuild (avoids redundant fetches)
+  - Limits traversal depth (default: 20 levels) to prevent infinite exploration of fictitious resources
   - Maintains per-host request queues to enforce single concurrent fetch per server
   - Handles relative and absolute URLs correctly
   - Extracts text content while removing scripts and styles
@@ -374,7 +375,7 @@ Python dictionary (hashmap)
 
 ### Depth Limiting (Preventing Infinite Exploration)
 
-The crawler enforces a **maximum depth limit (default: 5 levels)** to prevent infinite exploration of fictitious resources or deeply nested directories. This is configured via the `max_depth` parameter:
+The crawler enforces a **maximum depth limit (default: 20 levels)** to prevent infinite exploration of fictitious resources or deeply nested directories. This is configured via the `max_depth` parameter:
 
 ```python
 # Custom depth limit (e.g., 3 levels maximum)
@@ -396,15 +397,43 @@ crawler = WebCrawler(
     base_url="https://example.com",           # Starting URL
     politeness_delay_range=(6, 20),           # Seconds between requests per host
     max_pages=100,                            # Max pages to crawl
-    max_depth=5,                              # Max hierarchy depth
+    max_depth=20,                             # Max hierarchy depth
     max_crawl_time=600                        # Max crawl duration (seconds)
 )
 ```
 
 **Recommended values for resource protection**:
 - `max_depth=3` - Conservative (shallow crawl)
-- `max_depth=5` - Balanced (default)
-- `max_depth=8+` - Aggressive (deep crawl, use cautiously)
+- `max_depth=20` - Balanced (default)
+- `max_depth=25+` - Aggressive (deep crawl, use cautiously)
+
+### Incremental Crawling (Avoid Redundant Fetches)
+
+The crawler uses **SHA256 content hashing** to detect page changes and avoid redundant re-fetches on subsequent rebuilds. When you run `build` again:
+
+1. **First build**: Crawls all pages and computes SHA256 hashes
+2. **Subsequent builds**: Loads stored hashes and compares with newly fetched pages
+3. **Skip unchanged**: Pages with matching hashes are skipped (not re-indexed)
+4. **Update changed**: Pages with different hashes or new pages are re-indexed
+
+**Benefits**:
+- Faster rebuilds for large, stable sites (only processes changed pages)
+- Reduced network traffic and server load
+- Transparent to the user (automatic on `build` command)
+
+**Example output**:
+```
+Building index...
+Loading existing index for incremental crawling...
+Found 109 previously crawled pages.
+
+Crawl Results:
+  New/updated pages: 5
+  Unchanged pages: 104
+  Total pages crawled: 109
+```
+
+The hashes are stored in the index metadata (`index.json`) alongside document frequencies and lengths, making them persistent across sessions.
 
 ## Limitations & Future Enhancements
 

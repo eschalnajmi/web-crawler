@@ -48,25 +48,44 @@ class SearchTool:
         """
         Build the index by crawling the website.
         
+        Supports incremental crawling - if an index exists, only new/changed pages
+        are re-crawled based on content hash comparison.
+        
         Time Complexity: O(p*n) where p = pages, n = average words per page
         Network time dominates: O(p*6 seconds) due to politeness window
         """
         print("Building index...")
         print("This may take several minutes due to the politeness window.")
         
+        # Load existing hashes for incremental crawling if available
+        known_hashes = {}
+        if os.path.exists(INDEX_FILE):
+            print("Loading existing index for incremental crawling...")
+            self.index.load_from_file(INDEX_FILE)
+            known_hashes = self.index.page_hashes
+            print(f"Found {len(known_hashes)} previously crawled pages.")
+        
         crawler = WebCrawler()
-        pages = crawler.crawl()
+        pages, updated_hashes = crawler.crawl(known_hashes=known_hashes)
         
-        print(f"Crawled {len(pages)} pages")
+        # Update the index with new/changed pages
+        num_unchanged = len(updated_hashes) - len(pages)
+        print(f"\nCrawl Results:")
+        print(f"  New/updated pages: {len(pages)}")
+        print(f"  Unchanged pages: {num_unchanged}")
+        print(f"  Total pages crawled: {len(updated_hashes)}")
         
-        # Index all pages
+        # Index new/changed pages
         for url, text in pages.items():
             print(f"Indexing: {url}")
             self.index.index_document(url, text)
         
+        # Update page hashes in index
+        self.index.page_hashes.update(updated_hashes)
+        
         # Save the index
         self.index.save_to_file(INDEX_FILE)
-        print(f"Index saved to {INDEX_FILE}")
+        print(f"\nIndex saved to {INDEX_FILE}")
         
         # Print statistics
         stats = self.index.get_size()

@@ -30,6 +30,8 @@ class InvertedIndex:
         self.document_frequencies: Dict[str, int] = defaultdict(int)
         self.document_lengths: Dict[str, int] = defaultdict(int)
         self.total_documents: int = 0
+        # Track SHA256 hashes of page content for incremental crawling
+        self.page_hashes: Dict[str, str] = {}
     
     def _tokenize(self, text: str) -> List[Tuple[int, str]]:
         """
@@ -215,7 +217,17 @@ class InvertedIndex:
         }
         
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(index_dict, f, indent=2, ensure_ascii=False)
+            # Save with metadata including page hashes
+            data_with_metadata = {
+                'index': index_dict,
+                'metadata': {
+                    'document_frequencies': dict(self.document_frequencies),
+                    'document_lengths': dict(self.document_lengths),
+                    'total_documents': self.total_documents,
+                    'page_hashes': self.page_hashes
+                }
+            }
+            json.dump(data_with_metadata, f, indent=2, ensure_ascii=False)
     
     def load_from_file(self, filepath: str) -> None:
         """
@@ -243,6 +255,7 @@ class InvertedIndex:
             self.document_frequencies = defaultdict(int, metadata.get('document_frequencies', {}))
             self.document_lengths = defaultdict(int, metadata.get('document_lengths', {}))
             self.total_documents = metadata.get('total_documents', 0)
+            self.page_hashes = metadata.get('page_hashes', {})
         else:
             # Old flat format - reconstruct metadata
             index_dict = data

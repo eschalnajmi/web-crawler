@@ -10,6 +10,7 @@ import logging
 from urllib.robotparser import RobotFileParser
 from urllib.parse import urlparse, parse_qs
 from collections import defaultdict
+import hashlib
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ class WebCrawler:
     
     def __init__(self, base_url: str = BASE_URL,
                  politeness_delay_range: Tuple[int, int] = (POLITENESS_DELAY_MIN, POLITENESS_DELAY_MAX),
-                 max_pages: int = 100, max_depth: int = 5, max_crawl_time: int = 600):
+                 max_pages: int = 100, max_depth: int = 20, max_crawl_time: int = 600):
         """
         Initialize the web crawler.
         
@@ -32,7 +33,7 @@ class WebCrawler:
             base_url: The base URL to start crawling from
             politeness_delay_range: Inclusive min/max seconds between successive requests
             max_pages: Maximum number of pages to crawl (default: 100)
-            max_depth: Maximum depth in page hierarchy from start URL (default: 5).
+            max_depth: Maximum depth in page hierarchy from start URL (default: 20).
                       Prevents infinite exploration of fictitious resources by limiting
                       how deep the crawler traverses the directory/path hierarchy.
             max_crawl_time: Maximum crawl time in seconds (default: 600)
@@ -137,6 +138,14 @@ class WebCrawler:
 
     def _get_host(self, url: str) -> str:
         return urlparse(url).netloc
+    
+    def _compute_hash(self, content: str) -> str:
+        """Compute SHA256 hash of page content for change detection."""
+        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    
+    def _get_hash_for_url(self, url: str, known_hashes: Dict[str, str]) -> str:
+        """Get the stored hash for a URL, or empty string if not found."""
+        return known_hashes.get(url, "")
     
     def _fetch_page(self, url: str) -> str:
         """
@@ -256,18 +265,25 @@ class WebCrawler:
         depth = relative_path.count('/') - 1  # -1 because path starts with /
         return max(0, depth)
     
-    def crawl(self, start_url: str = None) -> Dict[str, str]:
+    def crawl(self, start_url: str = None, known_hashes: Dict[str, str] = None) -> Tuple[Dict[str, str], Dict[str, str]]:
         """
         Crawl the website starting from the base URL or a specific URL.
         
         Args:
             start_url: Optional specific URL to start from
+            known_hashes: Optional dict of URL -> hash for incremental crawling.
+                         Pages with matching hashes will be skipped.
             
         Returns:
-            Dictionary mapping URLs to their text content
+            Tuple of (pages dict, updated_hashes dict)
+            - pages: Dictionary mapping URLs to their text content (new/changed pages only)
+            - updated_hashes: Dictionary mapping URLs to their SHA256 hashes (all crawled pages)
         """
         if start_url is None:
             start_url = self.base_url
+        
+        if known_hashes is None:
+            known_hashes = {}
 
         if not self._is_allowed_by_robots(start_url):
             logger.warning(f"Start URL blocked by robots.txt: {start_url}")
@@ -275,6 +291,7 @@ class WebCrawler:
         
         crawl_start_time = time.time()
         pages = {}
+        updated_hashes = {}  # Track all page hashes for incremental crawling
         # Distribute initial URL into host queue
         start_host = self._get_host(start_url)
         self.host_queues[start_host].append((start_url, 0))
@@ -350,7 +367,20 @@ class WebCrawler:
                 logger.info(f"Crawling: {current_url} (depth: {current_depth})")
                 html = self._fetch_page(current_url)
                 text = self._extract_text(html)
-                pages[current_url] = text
+                
+                # Compute hash for change detection
+                content_hash = self._compute_hash(text)
+                updated_hashes[current_url] = content_hash
+                
+                # Check if content has changed
+                known_hash = self._get_hash_for_url(current_url, known_hashes)
+                if known_hash == content_hash:
+                    logger.info(f"Skipping {current_url} - content unchanged (hash match)")
+                else:
+                    # Content is new or changed - add to results
+                    if known_hash:
+                        logger.info(f"Updating {current_url} - content changed")
+                    pages[current_url] = text
                 
                 # Extract and queue new links
                 links = self._extract_links(html, current_url)
@@ -365,5 +395,5 @@ class WebCrawler:
                 logger.warning(f"Could not crawl {current_url}, skipping...")
                 continue
         
-        logger.info(f"Crawling complete. Found {len(pages)} pages. Time: {time.time() - crawl_start_time:.1f}s")
-        return pages
+        logger.info(f"Crawling complete. Found {len(pages)} new/updated pages. Total crawled: {len(updated_hashes)}. Time: {time.time() - crawl_start_time:.1f}s")
+        return pages, updated_hashes
