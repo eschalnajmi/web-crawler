@@ -5,7 +5,7 @@ A complete web search engine implementation that crawls websites, builds an inve
 ## Project Overview
 
 This project implements a professional-grade search engine that:
-- **Crawls** the website `https://quotes.toscrape.com/` while respecting a randomized 6 to 20 second politeness window
+  - **Crawls** the website `https://quotes.toscrape.com/` while respecting robots.txt and a randomized 6 to 20 second politeness window
 - **Builds** an inverted index with advanced TF-IDF (Term Frequency-Inverse Document Frequency) ranking
 - **Provides** multiple search modes: frequency-based and TF-IDF-ranked search
 - **Supports** query suggestions using fuzzy string matching
@@ -26,10 +26,12 @@ This project implements a professional-grade search engine that:
 #### 1. **Crawler** (`src/crawler.py`)
 - **Purpose**: Fetch and extract content from websites
 - **Features**:
-  - Respects a randomized 6 to 20 second politeness window between requests
+  - Respects `robots.txt` (including `Crawl-delay` when present), uses a descriptive `User-Agent`, and enforces a randomized 6 to 20 second politeness window between requests to the same host
+  - Limits traversal depth (default: 5 levels) to prevent infinite exploration of fictitious resources
+  - Maintains per-host request queues to enforce single concurrent fetch per server
   - Handles relative and absolute URLs correctly
   - Extracts text content while removing scripts and styles
-  - Implements error handling for network failures
+  - Implements error handling with exponential backoff for rate limits (429) and server errors (5xx)
   - Prevents duplicate crawling with visited URL tracking
 
 #### 2. **Indexer** (`src/indexer.py`)
@@ -367,6 +369,42 @@ Python dictionary (hashmap)
 **Choice**: Simple frequency sorting
 - **Pros**: Fast computation
 - **Alternatives**: TF-IDF, PageRank for more sophisticated ranking
+
+## Configuration & Resource Protection
+
+### Depth Limiting (Preventing Infinite Exploration)
+
+The crawler enforces a **maximum depth limit (default: 5 levels)** to prevent infinite exploration of fictitious resources or deeply nested directories. This is configured via the `max_depth` parameter:
+
+```python
+# Custom depth limit (e.g., 3 levels maximum)
+crawler = WebCrawler(max_depth=3)
+
+# Crawl with depth limit in effect
+pages = crawler.crawl()
+```
+
+**How it works**: 
+- Each URL is assigned a depth level based on its distance from the start URL
+- URLs deeper than `max_depth` are automatically skipped with a log message
+- Prevents crawlers from being trapped in infinite directory structures like `/a/b/c/d/e/.../...`
+
+### Other Configurable Parameters
+
+```python
+crawler = WebCrawler(
+    base_url="https://example.com",           # Starting URL
+    politeness_delay_range=(6, 20),           # Seconds between requests per host
+    max_pages=100,                            # Max pages to crawl
+    max_depth=5,                              # Max hierarchy depth
+    max_crawl_time=600                        # Max crawl duration (seconds)
+)
+```
+
+**Recommended values for resource protection**:
+- `max_depth=3` - Conservative (shallow crawl)
+- `max_depth=5` - Balanced (default)
+- `max_depth=8+` - Aggressive (deep crawl, use cautiously)
 
 ## Limitations & Future Enhancements
 

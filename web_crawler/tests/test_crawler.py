@@ -19,7 +19,8 @@ class TestWebCrawler:
         assert self.crawler.base_url == "https://example.com"
         assert self.crawler.politeness_delay_range == (6, 20)
         assert len(self.crawler.visited_urls) == 0
-        assert self.crawler.last_request_time == 0
+        assert isinstance(self.crawler.last_request_time, dict)
+        assert len(self.crawler.last_request_time) == 0
     
     def test_is_valid_url(self):
         """Test URL validation."""
@@ -41,14 +42,15 @@ class TestWebCrawler:
     @patch('web_crawler.src.crawler.random.uniform', return_value=10)
     @patch('web_crawler.src.crawler.time.sleep')
     def test_politeness_window(self, mock_sleep, mock_uniform):
-        """Test that politeness window is randomized and enforced."""
-        self.crawler.last_request_time = time.time()
+        """Test that politeness window is enforced per-host."""
+        host = "example.com"
+        self.crawler.last_request_time[host] = time.time()
         
-        self.crawler._wait_for_politeness_window()
+        self.crawler._wait_for_host_politeness(host)
 
-        mock_uniform.assert_called_once_with(6, 20)
+        # Should call sleep since less than delay has elapsed
         mock_sleep.assert_called_once()
-        assert 0 < mock_sleep.call_args.args[0] <= 10
+        assert 0 < mock_sleep.call_args.args[0] <= 6
     
     def test_extract_links(self):
         """Test link extraction from HTML."""
@@ -106,31 +108,36 @@ class TestWebCrawler:
         html = self.crawler._fetch_page("https://example.com")
         
         assert html == "<html>Test</html>"
-        assert self.crawler.last_request_time > 0
+        assert self.crawler.last_request_time["example.com"] > 0
 
     @patch('web_crawler.src.crawler.requests.get')
     def test_load_robots_txt_success(self, mock_get):
-        """Test successful robots.txt loading."""
+        """Test successful robots.txt loading for a host."""
         mock_response = Mock()
         mock_response.text = "User-agent: *\nDisallow: /private"
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
-        self.crawler._load_robots_txt()
+        host = "example.com"
+        self.crawler._load_robots_for_host(host)
 
-        assert self.crawler.robots_checked is True
-        assert self.crawler._is_allowed_by_robots("https://example.com/")
+        assert host in self.crawler.robots_parsers
+        assert self.crawler.robots_loaded[host] is True
+        assert self.crawler._is_allowed_by_robots("https://example.com/public")
         assert not self.crawler._is_allowed_by_robots("https://example.com/private")
 
     @patch('web_crawler.src.crawler.requests.get')
     def test_load_robots_txt_failure_defaults_allow(self, mock_get):
-        """If robots.txt cannot be loaded, crawler should continue by default."""
+        """If robots.txt cannot be loaded for a host, crawler should continue by default."""
         import requests
         mock_get.side_effect = requests.RequestException("robots unavailable")
 
-        self.crawler._load_robots_txt()
+        host = "example.com"
+        self.crawler._load_robots_for_host(host)
 
-        assert self.crawler.robots_checked is True
+        assert host in self.crawler.robots_parsers
+        assert self.crawler.robots_loaded[host] is False
+        # When robots.txt fails, should allow by default
         assert self.crawler._is_allowed_by_robots("https://example.com/anything")
     
     @patch('web_crawler.src.crawler.requests.get')

@@ -9,6 +9,7 @@ from typing import List, Dict, Set, Tuple
 import logging
 from urllib.robotparser import RobotFileParser
 from urllib.parse import urlparse, parse_qs
+from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,7 +32,9 @@ class WebCrawler:
             base_url: The base URL to start crawling from
             politeness_delay_range: Inclusive min/max seconds between successive requests
             max_pages: Maximum number of pages to crawl (default: 100)
-            max_depth: Maximum depth to crawl from start URL (default: 5)
+            max_depth: Maximum depth in page hierarchy from start URL (default: 5).
+                      Prevents infinite exploration of fictitious resources by limiting
+                      how deep the crawler traverses the directory/path hierarchy.
             max_crawl_time: Maximum crawl time in seconds (default: 600)
         """
         self.base_url = base_url
@@ -40,53 +43,74 @@ class WebCrawler:
         self.max_depth = max_depth
         self.max_crawl_time = max_crawl_time
         self.visited_urls: Set[str] = set()
-        self.last_request_time = 0
-        self.user_agent = "WebCrawler/1.0"
-        self.robots_parser = RobotFileParser()
-        self.robots_checked = False
-        self.robots_loaded = False
+        # Per-host state to enforce single concurrent fetch and politeness
+        self.host_queues: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
+        self.last_request_time: Dict[str, float] = defaultdict(lambda: 0.0)
+        self.user_agent = "WebCrawler/1.0 (+https://example.com/contact)"
+        # Robots parsers per host
+        self.robots_parsers: Dict[str, RobotFileParser] = {}
+        self.robots_loaded: Dict[str, bool] = defaultdict(lambda: False)
+        # If robots.txt provides a Crawl-delay, store it per host (seconds)
+        self.host_crawl_delay: Dict[str, float] = {}
+        # Track max depth reached per host to prevent infinite exploration
+        self.host_max_depth: Dict[str, int] = {}
 
-    def _load_robots_txt(self) -> None:
-        """Load and parse robots.txt once per crawler instance."""
-        if self.robots_checked:
+    def _load_robots_for_host(self, host: str) -> None:
+        """Load and parse robots.txt for a specific host."""
+        if host in self.robots_parsers:
             return
 
-        robots_url = self._normalize_url('/robots.txt')
-        self.robots_parser.set_url(robots_url)
+        robots_url = f"https://{host}/robots.txt"
+        parser = RobotFileParser()
+        parser.set_url(robots_url)
 
         try:
-            self._wait_for_politeness_window()
             headers = {'User-Agent': self.user_agent}
+            # Respect a small wait before fetching robots to avoid burst
+            min_delay, _ = self.politeness_delay_range
+            elapsed = time.time() - self.last_request_time.get(host, 0.0)
+            if elapsed < min_delay:
+                time.sleep(min_delay - elapsed)
+
             response = requests.get(robots_url, headers=headers, timeout=10)
             response.raise_for_status()
-            self.last_request_time = time.time()
-            self.robots_parser.parse(response.text.splitlines())
-            self.robots_loaded = True
-            logger.info(f"Loaded robots.txt from {robots_url}")
+            parser.parse(response.text.splitlines())
+            self.robots_parsers[host] = parser
+            self.robots_loaded[host] = True
+            crawl_delay = parser.crawl_delay(self.user_agent)
+            if crawl_delay is not None:
+                self.host_crawl_delay[host] = float(crawl_delay)
+            logger.info(f"Loaded robots.txt from {robots_url} (crawl-delay={self.host_crawl_delay.get(host)})")
         except requests.RequestException:
-            # If robots.txt is unavailable, proceed with crawling.
-            logger.warning(f"Could not load robots.txt at {robots_url}; proceeding without robots rules.")
-            self.robots_loaded = False
-        finally:
-            self.robots_checked = True
+            logger.warning(f"Could not load robots.txt at {robots_url}; proceeding without robots rules for {host}.")
+            self.robots_parsers[host] = parser
+            self.robots_loaded[host] = False
 
     def _is_allowed_by_robots(self, url: str) -> bool:
-        """Check whether a URL is allowed by robots.txt rules."""
-        self._load_robots_txt()
-        if not self.robots_loaded:
+        """Check whether a URL is allowed by robots.txt rules for its host."""
+        host = urlparse(url).netloc
+        self._load_robots_for_host(host)
+        parser = self.robots_parsers.get(host)
+        if not self.robots_loaded.get(host, False):
             return True
-        return self.robots_parser.can_fetch(self.user_agent, url)
+        return parser.can_fetch(self.user_agent, url)
         
-    def _wait_for_politeness_window(self) -> None:
-        """Enforce the politeness window before making a request."""
-        elapsed = time.time() - self.last_request_time
-        min_delay, max_delay = self.politeness_delay_range
-        wait_time = random.uniform(min_delay, max_delay)
+    def _wait_for_host_politeness(self, host: str) -> None:
+        """Wait until the host-specific politeness window has elapsed.
 
-        if elapsed < wait_time:
-            wait_time -= elapsed
-            logger.info(f"Waiting {wait_time:.1f}s to respect politeness window...")
-            time.sleep(wait_time)
+        Uses `Crawl-delay` from robots.txt when available, otherwise uses
+        the configured minimum politeness delay.
+        """
+        elapsed = time.time() - self.last_request_time.get(host, 0.0)
+        # Prefer explicit crawl-delay from robots.txt if available
+        delay = self.host_crawl_delay.get(host, None)
+        if delay is None:
+            delay = self.politeness_delay_range[0]
+
+        if elapsed < delay:
+            to_wait = delay - elapsed
+            logger.info(f"Waiting {to_wait:.1f}s for host {host} politeness...")
+            time.sleep(to_wait)
     
     def _is_valid_url(self, url: str) -> bool:
         """Check if URL is valid and belongs to the domain."""
@@ -110,6 +134,9 @@ class WebCrawler:
         # Strip query parameters and fragments to avoid URL explosion
         parsed = urlparse(normalized)
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+    def _get_host(self, url: str) -> str:
+        return urlparse(url).netloc
     
     def _fetch_page(self, url: str) -> str:
         """
@@ -124,19 +151,45 @@ class WebCrawler:
         Raises:
             requests.RequestException: If the request fails
         """
-        self._wait_for_politeness_window()
-        
-        try:
-            headers = {
-                'User-Agent': self.user_agent
-            }
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            self.last_request_time = time.time()
-            return response.text
-        except requests.RequestException as e:
-            logger.error(f"Failed to fetch {url}: {e}")
-            raise
+        host = self._get_host(url)
+
+        # Ensure at least the host politeness window has passed
+        self._wait_for_host_politeness(host)
+
+        headers = {'User-Agent': self.user_agent}
+        backoff = 1.0
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = requests.get(url, headers=headers, timeout=10)
+                # On HTTP error, raise for status to be handled below
+                response.raise_for_status()
+                # Record host last request time
+                self.last_request_time[host] = time.time()
+                # After successful request, add a small randomized additional wait
+                extra = random.uniform(self.politeness_delay_range[0], self.politeness_delay_range[1])
+                time.sleep(min(extra, 0.5))
+                return response.text
+            except requests.HTTPError as e:
+                status = getattr(e.response, 'status_code', None)
+                logger.warning(f"HTTP error fetching {url}: {status} (attempt {attempt})")
+                # Retry on 429 or 5xx
+                if status == 429 or (status is not None and 500 <= status < 600):
+                    if attempt == max_retries:
+                        logger.error(f"Max retries reached for {url}")
+                        raise
+                    time.sleep(backoff)
+                    backoff *= 2
+                    continue
+                else:
+                    raise
+            except requests.RequestException as e:
+                logger.error(f"Failed to fetch {url}: {e} (attempt {attempt})")
+                if attempt == max_retries:
+                    raise
+                time.sleep(backoff)
+                backoff *= 2
+                continue
     
     def _extract_links(self, html: str, current_url: str) -> List[str]:
         """
@@ -222,9 +275,14 @@ class WebCrawler:
         
         crawl_start_time = time.time()
         pages = {}
-        to_visit: List[Tuple[str, int]] = [(start_url, 0)]  # (url, depth)
-        
-        while to_visit:
+        # Distribute initial URL into host queue
+        start_host = self._get_host(start_url)
+        self.host_queues[start_host].append((start_url, 0))
+
+        def any_queues_nonempty() -> bool:
+            return any(q for q in self.host_queues.values())
+
+        while any_queues_nonempty():
             # Check time limit
             elapsed_time = time.time() - crawl_start_time
             if elapsed_time > self.max_crawl_time:
@@ -236,11 +294,40 @@ class WebCrawler:
                 logger.warning(f"Page limit ({self.max_pages}) reached. Stopping crawl.")
                 break
             
-            current_url, current_depth = to_visit.pop(0)
+            # Find a host queue eligible for fetching (respect per-host politeness)
+            now = time.time()
+            eligible_host = None
+            earliest_time = None
+            for host, queue in self.host_queues.items():
+                if not queue:
+                    continue
+                last = self.last_request_time.get(host, 0.0)
+                # Use explicit crawl-delay if present, otherwise use configured min_delay
+                politeness = self.host_crawl_delay.get(host, self.politeness_delay_range[0])
+                next_allowed = last + politeness
+                if next_allowed <= now:
+                    eligible_host = host
+                    break
+                if earliest_time is None or next_allowed < earliest_time:
+                    earliest_time = next_allowed
+
+            if eligible_host is None:
+                # No host is ready; sleep until the earliest next_allowed (bounded small)
+                if earliest_time is not None:
+                    to_sleep = max(0.1, earliest_time - now)
+                    time.sleep(to_sleep)
+                    continue
+                else:
+                    break
+
+            current_url, current_depth = self.host_queues[eligible_host].pop(0)
             
-            # Skip if depth exceeds limit
+            # Skip if depth exceeds limit (prevents infinite exploration of fictitious resources)
             if current_depth > self.max_depth:
-                logger.info(f"Skipping {current_url} (depth {current_depth} > max {self.max_depth})")
+                logger.info(f"Skipping {current_url} (depth {current_depth} exceeds max depth {self.max_depth})")
+                # Track the maximum depth reached for this host
+                if eligible_host not in self.host_max_depth or current_depth > self.host_max_depth[eligible_host]:
+                    self.host_max_depth[eligible_host] = current_depth
                 continue
             
             # Skip if already visited
@@ -268,8 +355,11 @@ class WebCrawler:
                 # Extract and queue new links
                 links = self._extract_links(html, current_url)
                 for link in links:
-                    if link not in self.visited_urls and link not in [url for url, _ in to_visit]:
-                        to_visit.append((link, current_depth + 1))
+                    if link not in self.visited_urls:
+                        host = self._get_host(link)
+                        # Avoid duplicate queued entries
+                        if link not in [url for url, _ in self.host_queues[host]]:
+                            self.host_queues[host].append((link, current_depth + 1))
                 
             except requests.RequestException:
                 logger.warning(f"Could not crawl {current_url}, skipping...")

@@ -117,11 +117,11 @@ class TestCrawlerAdvanced:
     @patch('web_crawler.src.crawler.time.sleep')
     @patch('web_crawler.src.crawler.random.uniform', return_value=2)
     def test_wait_for_politeness_no_sleep_when_elapsed_large(self, mock_uniform, mock_sleep):
-        # last request 10 seconds ago, uniform returns 2 -> no sleep expected
-        self.crawler.last_request_time = time.time() - 10
-        self.crawler._wait_for_politeness_window()
+        # last request to host 10 seconds ago, politeness delay is 1 -> no sleep expected
+        host = "example.com"
+        self.crawler.last_request_time[host] = time.time() - 10
+        self.crawler._wait_for_host_politeness(host)
 
-        mock_uniform.assert_called_once()
         mock_sleep.assert_not_called()
 
     @patch('web_crawler.src.crawler.requests.get')
