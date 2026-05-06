@@ -25,14 +25,14 @@ class WebCrawler:
     
     def __init__(self, base_url: str = BASE_URL,
                  politeness_delay_range: Tuple[int, int] = (POLITENESS_DELAY_MIN, POLITENESS_DELAY_MAX),
-                 max_pages: int = 100, max_depth: int = 20, max_crawl_time: int = 600):
+                 max_pages: int = 1000, max_depth: int = 20, max_crawl_time: int = 600):
         """
         Initialize the web crawler.
         
         Args:
             base_url: The base URL to start crawling from
             politeness_delay_range: Inclusive min/max seconds between successive requests
-            max_pages: Maximum number of pages to crawl (default: 100)
+            max_pages: Maximum number of pages to crawl (default: 1000)
             max_depth: Maximum depth in page hierarchy from start URL (default: 20).
                       Prevents infinite exploration of fictitious resources by limiting
                       how deep the crawler traverses the directory/path hierarchy.
@@ -353,12 +353,6 @@ class WebCrawler:
 
             if not self._is_allowed_by_robots(current_url):
                 logger.info(f"Skipping blocked URL by robots.txt: {current_url}")
-                continue
-            
-            # Skip non-main content pages
-            if 'tag' in current_url and current_url != self.base_url:
-                continue
-            if 'login' in current_url or 'logout' in current_url:
                 continue
             
             self.visited_urls.add(current_url)

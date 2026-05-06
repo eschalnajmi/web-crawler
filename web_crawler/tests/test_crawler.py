@@ -249,3 +249,54 @@ class TestCrawlerIntegration:
 
         assert "https://example.com/private" not in pages
         assert "https://example.com/public" in pages
+
+    @patch('web_crawler.src.crawler.requests.get')
+    def test_crawl_follows_linked_pages_from_root(self, mock_get):
+        """Crawler should start at the root and follow all linked same-host pages."""
+        robots_txt = """
+        User-agent: *
+        Disallow:
+        """
+        root_html = """
+        <html>
+            <a href="/page1">Page 1</a>
+            <a href="/tag/example">Tag page</a>
+            <p>Root content</p>
+        </html>
+        """
+        page1_html = """
+        <html>
+            <a href="/">Back home</a>
+            <p>Page 1 content</p>
+        </html>
+        """
+        tag_html = """
+        <html>
+            <p>Tag content</p>
+        </html>
+        """
+
+        responses = [
+            {"text": robots_txt},
+            {"text": root_html},
+            {"text": page1_html},
+            {"text": tag_html},
+        ]
+
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+
+        def side_effect(*args, **kwargs):
+            if responses:
+                mock_response.text = responses.pop(0)["text"]
+            return mock_response
+
+        mock_get.side_effect = side_effect
+
+        crawler = WebCrawler(base_url="https://example.com", politeness_delay_range=(0, 0), max_pages=10)
+        pages, hashes = crawler.crawl()
+
+        assert "https://example.com/" in pages
+        assert "https://example.com/page1" in pages
+        assert "https://example.com/tag/example" in pages
+        assert set(pages).issubset(set(hashes))
